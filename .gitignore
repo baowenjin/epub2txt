@@ -1,0 +1,7 @@
+input/
+output/
+.DS_Store
+__pycache__/
+*.pyc
+*.txt
+*.epub
