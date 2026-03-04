@@ -278,15 +278,27 @@
         if (!fileEntry) continue;
         dbgFiles++;
 
-        const html = await fileEntry.async('string');
+        // Use uint8array + TextDecoder for reliable UTF-8 decoding.
+        // async('string') returns a binary (Latin-1) string which is unreliable.
+        const bytes = await fileEntry.async('uint8array');
+        const rawHtml = new TextDecoder('utf-8').decode(bytes);
+        // XHTML self-closing <script/> and <style/> are valid in XML but break
+        // HTML parsing: the parser treats them as open tags and swallows all
+        // following content as script/style data. Fix before handing to DOMParser.
+        const html = rawHtml.replace(/<(script|style)(\s[^>]*)\/>/gi, '<$1$2></$1>');
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
         // Remove script/style nodes
         doc.querySelectorAll('script, style').forEach(el => el.remove());
 
-        // textContent is reliable across all browsers for DOMParser documents;
-        // innerText can return "" in non-rendered contexts.
         const rawText = doc.body ? doc.body.textContent : '';
+
+        // Debug: log first 2 files to console
+        if (dbgFiles <= 2) {
+          console.log(`[epub2txt #${dbgFiles}] path:${filePath} htmlLen:${html.length} bodyExists:${!!doc.body} rawLen:${rawText.length}`);
+          console.log(`[epub2txt #${dbgFiles}] raw(0-80):`, JSON.stringify(rawText.substring(0, 80)));
+        }
+
         const cleaned = cleanText(rawText);
         if (cleaned.trim()) chunks.push(cleaned);
       }

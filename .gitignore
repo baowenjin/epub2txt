@@ -3,3 +3,5 @@ output/
 .DS_Store
 __pycache__/
 *.pyc
+node_modules/
+input_archive/
