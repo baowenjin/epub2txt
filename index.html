@@ -260,24 +260,23 @@
       const spineItems = byTag(opfDoc, 'itemref');
       if (!spineItems.length) throw new Error('找不到 spine 内容');
 
-      console.log('[epub2txt] OPF:', opfPath, '| manifest items:', Object.keys(manifest).length, '| spine items:', spineItems.length);
-
       // 3. Process each document in spine order
       const chunks = [];
+      let dbgHrefs = 0, dbgFiles = 0;
+
       for (let i = 0; i < spineItems.length; i++) {
         setProgress(Math.round((i / spineItems.length) * 90));
 
         const idref = spineItems[i].getAttribute('idref');
         const href = manifest[idref];
         if (!href) continue;
+        dbgHrefs++;
 
         // Normalize path: resolve ./ and ../ relative to OPF directory
         const filePath = resolvePath(opfDir, href.split('#')[0]);
         const fileEntry = zip.file(filePath) || zip.file(decodeURIComponent(filePath));
-        if (!fileEntry) {
-          console.warn('[epub2txt] file not found in zip:', filePath);
-          continue;
-        }
+        if (!fileEntry) continue;
+        dbgFiles++;
 
         const html = await fileEntry.async('string');
         const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -294,7 +293,12 @@
 
       setProgress(100);
 
-      if (!chunks.length) throw new Error('未提取到任何文本，请打开浏览器控制台查看详情');
+      if (!chunks.length) {
+        const manifestCount = Object.keys(manifest).length;
+        throw new Error(
+          `未提取到文本。诊断 → manifest:${manifestCount}项 spine:${spineItems.length}项 有href:${dbgHrefs}项 找到文件:${dbgFiles}项 有内容:${chunks.length}项`
+        );
+      }
 
       // 4. Final join + collapse excessive newlines
       let result = chunks.join('\n\n');
