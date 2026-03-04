@@ -138,6 +138,16 @@
       font-size: 0.78rem;
       color: #777;
     }
+
+    .version {
+      position: fixed;
+      bottom: 0.6rem;
+      right: 0.8rem;
+      font-size: 0.68rem;
+      color: #bbb;
+      font-family: monospace;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -207,13 +217,31 @@
 
     // --- EPUB parsing ---
 
+    // Resolve a relative href against a base directory path,
+    // normalizing . and .. segments so JSZip can find the file.
+    function resolvePath(baseDir, href) {
+      const parts = (baseDir + href).split('/');
+      const out = [];
+      for (const p of parts) {
+        if (p === '..') out.pop();
+        else if (p !== '.') out.push(p);
+      }
+      return out.join('/');
+    }
+
+    // getElementsByTagNameNS('*', localName) matches regardless of XML namespace,
+    // unlike querySelector which can fail on namespace-qualified XML elements.
+    function byTag(doc, localName) {
+      return [...doc.getElementsByTagNameNS('*', localName)];
+    }
+
     async function epubToTxt(arrayBuffer) {
       const zip = await JSZip.loadAsync(arrayBuffer);
 
       // 1. Find OPF path from container.xml
       const containerXml = await zip.file('META-INF/container.xml').async('string');
       const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
-      const rootfileEl = containerDoc.querySelector('rootfile');
+      const rootfileEl = byTag(containerDoc, 'rootfile')[0];
       if (!rootfileEl) throw new Error('找不到 container.xml 中的 rootfile');
       const opfPath = rootfileEl.getAttribute('full-path');
       const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
@@ -223,12 +251,16 @@
       const opfDoc = new DOMParser().parseFromString(opfXml, 'application/xml');
 
       const manifest = {};
-      opfDoc.querySelectorAll('manifest item').forEach(item => {
-        manifest[item.getAttribute('id')] = item.getAttribute('href');
+      byTag(opfDoc, 'item').forEach(item => {
+        const id = item.getAttribute('id');
+        const href = item.getAttribute('href');
+        if (id && href) manifest[id] = href;
       });
 
-      const spineItems = [...opfDoc.querySelectorAll('spine itemref')];
+      const spineItems = byTag(opfDoc, 'itemref');
       if (!spineItems.length) throw new Error('找不到 spine 内容');
+
+      console.log('[epub2txt] OPF:', opfPath, '| manifest items:', Object.keys(manifest).length, '| spine items:', spineItems.length);
 
       // 3. Process each document in spine order
       const chunks = [];
@@ -239,10 +271,13 @@
         const href = manifest[idref];
         if (!href) continue;
 
-        // Resolve path relative to OPF directory
-        const filePath = opfDir + href.split('#')[0];
+        // Normalize path: resolve ./ and ../ relative to OPF directory
+        const filePath = resolvePath(opfDir, href.split('#')[0]);
         const fileEntry = zip.file(filePath) || zip.file(decodeURIComponent(filePath));
-        if (!fileEntry) continue;
+        if (!fileEntry) {
+          console.warn('[epub2txt] file not found in zip:', filePath);
+          continue;
+        }
 
         const html = await fileEntry.async('string');
         const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -250,12 +285,16 @@
         // Remove script/style nodes
         doc.querySelectorAll('script, style').forEach(el => el.remove());
 
-        const rawText = doc.body ? doc.body.innerText || doc.body.textContent : '';
+        // textContent is reliable across all browsers for DOMParser documents;
+        // innerText can return "" in non-rendered contexts.
+        const rawText = doc.body ? doc.body.textContent : '';
         const cleaned = cleanText(rawText);
         if (cleaned.trim()) chunks.push(cleaned);
       }
 
       setProgress(100);
+
+      if (!chunks.length) throw new Error('未提取到任何文本，请打开浏览器控制台查看详情');
 
       // 4. Final join + collapse excessive newlines
       let result = chunks.join('\n\n');
@@ -344,6 +383,13 @@
       a.click();
       URL.revokeObjectURL(url);
     });
+  </script>
+  <div class="version" id="ver"></div>
+  <script>
+    const d = new Date(document.lastModified);
+    const p = n => String(n).padStart(2, '0');
+    document.getElementById('ver').textContent =
+      `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
   </script>
 </body>
 </html>
